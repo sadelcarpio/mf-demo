@@ -27,7 +27,7 @@ COSINE_DEFAULT = {"softmax", "two_tower"}
 # Chosen by scripts/hp_search.py: best purity@3 + silhouette in the default 2-D view,
 # among configs within 0.05 recall@5 of the model's best (averaged over 2 seeds).
 DEFAULTS = {
-    "mf": dict(k=4, epochs=300, lr=0.03, l2=0.2, biases=False),
+    "mf": dict(k=4, epochs=300, lr=0.03, l2=0.2, biases=False, solver="gd", sweeps=15),
     "logmf": dict(k=2, epochs=300, lr=0.05, l2=0.01, threshold=3),
     "softmax": dict(k=3, epochs=150, lr=0.01, temperature=0.2, threshold=3, use_id=True, use_history=True),
     "two_tower": dict(k=4, epochs=20, lr=0.003, temperature=0.2, threshold=3, logq=True,
@@ -128,13 +128,25 @@ def controls(name: str) -> tuple:
     """Hyperparameter form. Returns params as a hashable tuple for caching."""
     d = DEFAULTS[name]
     p = {}
+    if "solver" in d:  # outside the form so the form's controls follow the choice immediately
+        p["solver"] = st.segmented_control(
+            "Solver", ["gd", "als"], default=d["solver"], key=f"solver_{name}",
+            format_func={"gd": "Gradient descent (full-batch Adam)", "als": "ALS (alternating least squares)"}.get,
+            help="Both minimize the same loss. GD takes small steps on U and V together. ALS solves every "
+                 "user row exactly with V fixed, then every game row with U fixed.") or d["solver"]
+    als = p.get("solver") == "als"
     with st.form(f"form_{name}", border=True):
         c = st.columns(4)
         p["k"] = c[0].select_slider("Embedding dim k", [2, 3, 4, 8, 16, 32], value=d["k"])
-        p["epochs"] = c[1].select_slider("Epochs", [10, 20, 40, 80, 150, 300, 600, 1000],
-                                         value=d["epochs"])
-        p["lr"] = c[2].select_slider("Learning rate", [0.001, 0.003, 0.005, 0.01, 0.03, 0.05, 0.1],
-                                     value=d["lr"])
+        if als:
+            p["sweeps"] = c[1].select_slider("ALS sweeps", [1, 2, 3, 5, 10, 15, 20, 30], value=d["sweeps"],
+                                             help="One sweep = solve all users, then all games.")
+            c[2].caption("No learning rate: each half-sweep is an exact least-squares solve.")
+        else:
+            p["epochs"] = c[1].select_slider("Epochs", [10, 20, 40, 80, 150, 300, 600, 1000],
+                                             value=d["epochs"])
+            p["lr"] = c[2].select_slider("Learning rate", [0.001, 0.003, 0.005, 0.01, 0.03, 0.05, 0.1],
+                                         value=d["lr"])
         if "l2" in d:
 
             p["l2"] = c[3].select_slider("L2 λ", [0.0, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0], value=d["l2"])
@@ -171,20 +183,26 @@ def metric_row(r: models.Result) -> None:
         c.metric(k, f"{v:.3f}")
 
 
-def loss_chart(r: models.Result, ylabel: str) -> None:
-    st.caption(f"Training loss ({ylabel})")
-    st.line_chart(pd.DataFrame({"epoch": np.arange(1, len(r.loss) + 1), "loss": r.loss}),
-                  x="epoch", y="loss", height=180)
+def loss_chart(r: models.Result, ylabel: str, step: str = "epoch") -> None:
+    st.caption(f"Training loss ({ylabel}) per {step}")
+    st.line_chart(pd.DataFrame({step: np.arange(1, len(r.loss) + 1), "loss": r.loss}),
+                  x=step, y="loss", height=180)
 
 
 def embedding_section(name: str, params: tuple, threshold: float) -> models.Result:
     r = train(name, params)
     uxy, ixy, explained = projected(name, params, method, normalize)
     epochs = r.epochs
+    als = dict(params).get("solver") == "als"
+    labels = None
+    if als:  # two snapshots per sweep: after solving users, after solving games
+        labels = ["0 · init" if e == 0 else f"{int(np.ceil(e))} · users solved" if e % 1 else f"{int(e)} · games solved"
+                  for e in epochs]
     left, right = st.columns([5, 2])
     with left:
         fig = viz.embedding_figure(ds, uxy, ixy, epochs, focus_user=focus,
-                                   liked=viz.liked_items(ds, threshold))
+                                   liked=viz.liked_items(ds, threshold), labels=labels,
+                                   step_name="sweep" if als else "epoch")
         st.plotly_chart(fig, width="stretch")
         k = dict(params)["k"]
         if method != "PCA":
@@ -203,7 +221,8 @@ def embedding_section(name: str, params: tuple, threshold: float) -> models.Resu
         st.markdown(WHAT_IS_PLOTTED[name])
         metric_row(r)
         loss_chart(r, {"mf": "MSE", "logmf": "BCE", "softmax": "cross-entropy",
-                       "two_tower": "in-batch CE", "fm": "BCE" if dict(params).get("logistic") else "MSE"}[name])
+                       "two_tower": "in-batch CE", "fm": "BCE" if dict(params).get("logistic") else "MSE"}[name],
+                   step="ALS sweep" if als else "epoch")
         if focus is not None:
             st.caption(f"Top-5 unseen games for **user {focus}**")
             st.dataframe(viz.topk_table(ds, r.scores, focus), hide_index=True, width="stretch")
@@ -274,9 +293,26 @@ pulls a user toward the games they rated highly and pushes them away from the on
 - **Raise k**: train RMSE drops, but test RMSE stops improving and then rises. That's overfitting on
   ~450 ratings.
 - **Cold start**: the open markers (users with no ratings) and the white *Silent Hill f* never move.
-  The loss has no gradient for them, so only L2 acts and pulls them toward the origin.
+  They appear in no observed pair, so neither the loss nor the L2 term (which also covers only
+  observed pairs) gives them a gradient. Their rows stay at the random initialization, close to the
+  origin because the init is small. There is no OOV embedding: each one has its own row that
+  training never touches.
 - **Biases**: without them, U·V has to produce the absolute star level (≈3), so everything leans in a
   shared "mean" direction. With biases on, the embeddings only need to encode taste.
+
+**Solvers: gradient descent vs ALS.** Both minimize the same loss. The L2 term on each row scales with
+its number of ratings (ALS-WR), so both reach the same optimum (objective 2.0524 vs 2.0526 at the
+defaults).
+- **Gradient descent** (full batch): every epoch computes the loss over *all* observed ratings and
+  takes one Adam step on U and V together. Many small steps, and the learning rate matters.
+- **ALS**: fix V, and each user's row is a small ridge regression with an exact solution,
+  u = (V_Iᵀ V_I + λ n_u I)⁻¹ V_Iᵀ r_u. Then fix U and solve every game the same way. No learning
+  rate, and it converges in about 10 sweeps. Each row is independent, so it parallelizes
+  (*"Parallelizable"* on the slides, and why Spark uses it). It needs squared loss, so logistic MF
+  and everything after it can't use it.
+- In the replay, ALS moves in big alternating jumps: users jump, then games jump. GD drifts smoothly.
+- The final plots may look rotated or mirrored between solvers. That's expected: U·Vᵀ doesn't change
+  when U and V are rotated together, so the optimum is only unique up to a rotation.
 """)
     with st.expander("Predicted rating matrix vs observed", expanded=False):
         order = users_by_likes()
@@ -342,9 +378,15 @@ origin. Untick *cosine view* in the sidebar to see this.
 **History leakage**: during training, each user's positives are randomly split each epoch, half as
 input history and half as target, so the encoder can't simply copy its input.
 
-**Cold start (users)**: the open markers have no history and an untrained user_id, yet they land near
-their stated favorite category thanks to the side features. Games are still table rows, so the new
-release (white) stays near where it started.
+**Cold start (users)**: the open markers have no history, and their user_id row never gets a
+training signal. Adam's weight decay shrinks it partway toward zero, but it stays random noise.
+Even so, they land near their favorite category thanks to the side features (platform, age,
+favorite).
+
+**Cold start (items)**: different from MF. The new release's row of W *does* get a gradient,
+because it appears in every user's softmax denominator and is never a positive. The model learns
+to push it down for everyone (≈0.1% probability vs 5% uniform). A table-based item can't be cold
+started here; it needs retraining once it has interactions.
 """)
     if focus is not None:
         probs = r.extras["probs"][focus]
@@ -416,7 +458,8 @@ are **sums**, trained **pointwise** (MSE or BCE) like MF.
 
 - **Special case**: keep only user_id and item_id and you get MF with biases.
 - **Cold start on both sides**: the new release is placed by Σ v(tag=horror, story, stealth). A new
-  user is placed by Σ v(platform, age, favorite). Uncheck *Include user_id / item_id* to get a pure
+  user is placed by Σ v(platform, age, favorite). Their own user_id / item_id rows are never active
+  during training, so they stay at their small random init and add a little noise. Uncheck *Include user_id / item_id* to get a pure
   content model in which users with identical features collapse to the same point.
 """)
     names, Vf = r.extras["feature_names"], r.extras["feature_V"]

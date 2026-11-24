@@ -66,7 +66,8 @@ def _short(title: str) -> str:
 
 
 def embedding_figure(ds: Dataset, user_xy, item_xy, epochs, focus_user: int | None = None,
-                     liked: dict | None = None, height: int = 620, title: str = "") -> go.Figure:
+                     liked: dict | None = None, height: int = 620, title: str = "",
+                     labels: list[str] | None = None, step_name: str = "epoch") -> go.Figure:
     """Animated scatter of users (small, no labels) and items (large, outlined, labeled).
 
     For focus_user, the figure also highlights that user and draws lines to the games
@@ -145,13 +146,14 @@ def embedding_figure(ds: Dataset, user_xy, item_xy, epochs, focus_user: int | No
 
     fig = go.Figure(data=traces(n - 1))  # start on the trained state
     if n > 1:
-        fig.frames = [go.Frame(data=traces(f), name=str(epochs[f])) for f in range(n)]
-        steps = [dict(method="animate", label=str(epochs[f]),
-                      args=[[str(epochs[f])], dict(mode="immediate", frame=dict(duration=0, redraw=True),
+        labels = labels or [str(e) for e in epochs]
+        fig.frames = [go.Frame(data=traces(f), name=labels[f]) for f in range(n)]
+        steps = [dict(method="animate", label=labels[f],
+                      args=[[labels[f]], dict(mode="immediate", frame=dict(duration=0, redraw=True),
                                                    transition=dict(duration=0))])
                  for f in range(n)]
         fig.update_layout(
-            sliders=[dict(active=n - 1, steps=steps, currentvalue=dict(prefix="epoch "),
+            sliders=[dict(active=n - 1, steps=steps, currentvalue=dict(prefix=f"{step_name} "),
                           pad=dict(t=40), len=0.9, x=0.1)],
             updatemenus=[dict(type="buttons", showactive=False, x=0.0, y=0, xanchor="left",
                               yanchor="top", pad=dict(t=45, r=10), buttons=[

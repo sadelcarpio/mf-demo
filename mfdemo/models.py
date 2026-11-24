@@ -115,9 +115,15 @@ class ItemEncoder(nn.Module):
 # --------------------------------------------------------------------------- 1 & 2: MF
 def train_mf(ds: Dataset, k: int = 2, epochs: int = 300, lr: float = 0.05, l2: float = 0.05,
              logistic: bool = False, threshold: float = 3, biases: bool = False,
-             init_std: float = 0.1, seed: int = 0) -> Result:
+             solver: str = "gd", sweeps: int = 15, init_std: float = 0.1, seed: int = 0) -> Result:
     """Classic MF, R_hat = U V^T, trained only on observed entries.
-    logistic=False: MSE against 1-5 stars.  logistic=True: BCE against y = [rating > threshold]."""
+    logistic=False: MSE against 1-5 stars.  logistic=True: BCE against y = [rating > threshold].
+
+    solver="gd":  full-batch gradient descent with Adam. Each epoch is one step on the loss over
+                  all observed ratings.
+    solver="als": alternating least squares. Each sweep solves every user row in closed form with V
+                  fixed, then every item row with U fixed. Both solvers minimize the same objective
+                  (the L2 term per row scales with its number of ratings, as in ALS-WR)."""
     torch.manual_seed(seed)
     u = torch.as_tensor(ds.train.user_id.to_numpy().copy())
     i = torch.as_tensor(ds.train.item_id.to_numpy().copy())
@@ -137,18 +143,24 @@ def train_mf(ds: Dataset, k: int = 2, epochs: int = 300, lr: float = 0.05, l2: f
         return s + bu[uu] + bi[ii] + b0 if biases else s
 
     res = Result()
-    snaps = _snap_epochs(epochs)
     res.snap(0, U, V)
-    for ep in range(1, epochs + 1):
-        s = predict(u, i)
-        data_loss = F.binary_cross_entropy_with_logits(s, y) if logistic else F.mse_loss(s, y)
-        reg = l2 * ((U[u] ** 2).sum(1) + (V[i] ** 2).sum(1)).mean()
-        opt.zero_grad()
-        (data_loss + reg).backward()
-        opt.step()
-        res.loss.append(data_loss.item())
-        if ep in snaps:
-            res.snap(ep, U, V)
+    if solver == "als":
+        if logistic:
+            raise ValueError("ALS needs squared loss: logistic MF has no closed-form row update")
+        with torch.no_grad():
+            _als(ds, u, i, r, U, V, bu, bi, b0, l2, biases, sweeps, res, predict)
+    else:
+        snaps = _snap_epochs(epochs)
+        for ep in range(1, epochs + 1):
+            s = predict(u, i)  # full batch: every observed train rating, every step
+            data_loss = F.binary_cross_entropy_with_logits(s, y) if logistic else F.mse_loss(s, y)
+            reg = l2 * ((U[u] ** 2).sum(1) + (V[i] ** 2).sum(1)).mean()
+            opt.zero_grad()
+            (data_loss + reg).backward()
+            opt.step()
+            res.loss.append(data_loss.item())
+            if ep in snaps:
+                res.snap(ep, U, V)
 
     with torch.no_grad():
         full = U @ V.T
@@ -171,6 +183,51 @@ def train_mf(ds: Dataset, k: int = 2, epochs: int = 300, lr: float = 0.05, l2: f
             res.metrics["test RMSE"] = float(np.sqrt(((st - tr) ** 2).mean()))
     res.metrics["test recall@5"] = recall_at_k(ds, res.scores, threshold=threshold)
     return res
+
+
+def _solve_rows(M, T, Fx, reg, reg_mask):
+    """Ridge regression for every row at once: for row r with observed columns c (M[r, c] = 1),
+    minimize sum_c (T[r, c] - <x_r, Fx[c]>)^2 + reg[r] * ||x_r * reg_mask||^2.
+    Closed form: x_r = (Fx_c^T Fx_c + reg[r] diag(reg_mask))^-1 Fx_c^T T[r, c]."""
+    A = torch.einsum("rc,cd,ce->rde", M, Fx, Fx) + reg[:, None, None] * torch.diag(reg_mask)
+    b = torch.einsum("rc,cd->rd", M * T, Fx)
+    return torch.linalg.solve(A, b)
+
+
+def _als(ds, u, i, r, U, V, bu, bi, b0, l2, biases, sweeps, res, predict):
+    """Alternating least squares on the same objective as the GD path:
+    sum_obs (r - pred)^2 + l2 * sum_obs (|U_u|^2 + |V_i|^2)  ==  per-row L2 of l2 * n_ratings(row).
+    Biases (if on) are solved jointly with the embedding as an extra unregularized column.
+    The global mean b0 stays fixed. Rows with no ratings (cold start) have nothing to fit and
+    keep their initial values, as in the GD path."""
+    k = U.shape[1]
+    R = torch.zeros(ds.n_users, ds.n_items)
+    M = torch.zeros(ds.n_users, ds.n_items)
+    R[u, i], M[u, i] = r, 1.0
+    n_u, n_i = M.sum(1), M.sum(0)
+    wu, wi = n_u > 0, n_i > 0  # rows that have data
+    ones_u, ones_i = torch.ones(ds.n_users, 1), torch.ones(ds.n_items, 1)
+    mask = torch.cat([torch.ones(k), torch.zeros(1)]) if biases else torch.ones(k)
+
+    for s in range(1, sweeps + 1):
+        # users: fix V (and item biases), solve each user's row
+        Fx = torch.cat([V, ones_i], 1) if biases else V
+        T = R - (b0 + bi[None, :]) if biases else R
+        x = _solve_rows(M[wu], T[wu], Fx, l2 * n_u[wu], mask)
+        U[wu] = x[:, :k]
+        if biases:
+            bu[wu] = x[:, k]
+        res.snap(s - 0.5, U, V)
+
+        # items: fix U (and user biases), solve each item's row
+        Fx = torch.cat([U, ones_u], 1) if biases else U
+        T = R.T - (b0 + bu[None, :]) if biases else R.T
+        x = _solve_rows(M.T[wi], T[wi], Fx, l2 * n_i[wi], mask)
+        V[wi] = x[:, :k]
+        if biases:
+            bi[wi] = x[:, k]
+        res.snap(s, U, V)
+        res.loss.append(F.mse_loss(predict(u, i), r).item())
 
 
 # --------------------------------------------------------------------------- 3: softmax

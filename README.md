@@ -6,7 +6,7 @@ during training.
 
 | Page | Model | User vector | Item vector | Loss |
 |---|---|---|---|---|
-| 1 | MF (regression) | row of U | row of V | MSE on 1–5★ |
+| 1 | MF (regression) | row of U | row of V | MSE on 1–5★, solved by full-batch GD (Adam) or ALS |
 | 2 | Logistic MF | row of U | row of V | BCE on rating > threshold |
 | 3 | Softmax over all items | encoder(user feats + history) | row of W (pre-softmax) | 1/n-target CE, temperature τ |
 | 4 | Two-tower | user tower (L2-norm) | item tower (L2-norm) | in-batch softmax, B = 4, τ, logQ |
