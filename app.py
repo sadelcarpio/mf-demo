@@ -24,14 +24,17 @@ PAGES = {
 
 COSINE_DEFAULT = {"softmax", "two_tower"}
 
+# Chosen by scripts/hp_search.py: best purity@3 + silhouette in the default 2-D view,
+# among configs within 0.05 recall@5 of the model's best (averaged over 2 seeds).
 DEFAULTS = {
-    "mf": dict(k=3, epochs=300, lr=0.05, l2=0.2, biases=False),
-    "logmf": dict(k=3, epochs=300, lr=0.05, l2=0.05, threshold=3),
-    "softmax": dict(k=3, epochs=300, lr=0.01, temperature=1.0, threshold=3, use_id=True, use_history=True),
-    "two_tower": dict(k=3, epochs=40, lr=0.01, temperature=0.1, threshold=3, logq=True,
+    "mf": dict(k=4, epochs=300, lr=0.03, l2=0.2, biases=False),
+    "logmf": dict(k=2, epochs=300, lr=0.05, l2=0.01, threshold=3),
+    "softmax": dict(k=3, epochs=150, lr=0.01, temperature=0.2, threshold=3, use_id=True, use_history=True),
+    "two_tower": dict(k=4, epochs=20, lr=0.003, temperature=0.2, threshold=3, logq=True,
                       use_id=True, use_history=True),
-    "fm": dict(k=4, epochs=300, lr=0.03, l2=0.1, logistic=False, threshold=3, use_ids=True),
+    "fm": dict(k=8, epochs=150, lr=0.03, l2=0.05, logistic=False, threshold=3, use_ids=True),
 }
+
 
 
 @st.cache_resource
@@ -184,8 +187,13 @@ def embedding_section(name: str, params: tuple, threshold: float) -> models.Resu
                                    liked=viz.liked_items(ds, threshold))
         st.plotly_chart(fig, width="stretch")
         k = dict(params)["k"]
-        note = (f"PCA of k={k} → 2 (explains {explained:.0%} of the final variance)"
-                if method == "PCA" else "t-SNE, warm-started frame to frame (only local neighborhoods are meaningful)")
+        if method != "PCA":
+            note = None
+        elif k == 2:
+            note = "k = 2: raw coordinates, no projection (origin kept, so dot products read directly)"
+        else:
+            note = f"PCA of k={k} → 2 (explains {explained:.0%} of the final variance)"
+        note = (note if note is not None else "t-SNE, warm-started frame to frame (only local neighborhoods are meaningful)")
         st.caption(f"{note}. Press **▶ replay training** to animate the saved snapshots of the last run, or drag the epoch slider. "
                    "Small markers are users and large outlined ones are games. Color and shape "
                    "show the category; a user gets the category they rate highest. Open gray "
@@ -364,8 +372,8 @@ elif page == "two_tower":
 Both sides are now **encoders**: games get an item tower over item_id, tags and play mode. Each batch
 holds **B = 4 (user, positive game) pairs**. The diagonal of the 4×4 score matrix holds the positives
 and the 12 off-diagonal cells are free negatives. Vectors are **L2-normalized**, so the score is
-cosine/τ and everything lives on a unit sphere. With k = 3, the 2-D projection shows that sphere
-seen from above: users and games sit on a ring.
+cosine/τ and everything lives on a unit sphere, so in the 2-D projection
+users and games stay inside a disc of radius 1.
 
 **logQ**: popular games show up as in-batch negatives more often, so without the correction they get
 pushed away from everyone. Subtracting log q_j cancels that sampling bias. Toggle it and watch where

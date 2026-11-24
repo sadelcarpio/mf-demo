@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 .idea/
 *.pdf
+scripts/hp_results.csv

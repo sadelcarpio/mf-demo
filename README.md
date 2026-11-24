@@ -38,3 +38,6 @@ In the plots, each user is colored by the game category they rate highest on ave
 - `mfdemo/models.py`: the five PyTorch trainers. Each records 40 embedding snapshots.
 - `mfdemo/viz.py`: PCA fit on the final epoch and applied to all snapshots (fixed axes), warm-started t-SNE per snapshot, plotly animation
 - `app.py`: Streamlit UI
+- `scripts/hp_search.py`: grid search that picked each model's defaults. It scores how cleanly users
+  and games cluster by category in the default 2-D view, keeping only configs whose recall@5 is close
+  to the model's best.

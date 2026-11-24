@@ -50,14 +50,14 @@ def project(user_snaps, item_snaps, method: str = "PCA", normalize: bool = False
             vs.append(prev[nu:])
         return us, vs, 1.0
 
-    mean = final.mean(0)
     if final.shape[1] <= 2:
-        comps = np.eye(final.shape[1], 2)
-        explained = 1.0
-    else:
-        _, s, vt = np.linalg.svd(final - mean, full_matrices=False)
-        comps = vt[:2].T
-        explained = float((s[:2] ** 2).sum() / (s ** 2).sum())
+        # k = 2: no projection needed. Plot the raw coordinates and keep the true origin,
+        # because the score is a dot product measured from (0, 0).
+        return [u[:, :2] for u in U], [v[:, :2] for v in V], 1.0
+    mean = final.mean(0)
+    _, s, vt = np.linalg.svd(final - mean, full_matrices=False)
+    comps = vt[:2].T
+    explained = float((s[:2] ** 2).sum() / (s ** 2).sum())
     return [(u - mean) @ comps for u in U], [(v - mean) @ comps for v in V], explained
 
 
