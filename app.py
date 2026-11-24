@@ -32,7 +32,7 @@ DEFAULTS = {
     "softmax": dict(k=3, epochs=150, lr=0.01, temperature=0.2, threshold=3, use_id=True, use_history=True),
     "two_tower": dict(k=4, epochs=20, lr=0.003, temperature=0.2, threshold=3, logq=True,
                       use_id=True, use_history=True),
-    "fm": dict(k=8, epochs=150, lr=0.03, l2=0.05, logistic=False, threshold=3, use_ids=True),
+    "fm": dict(k=3, epochs=300, lr=0.03, l2=0.2, logistic=False, threshold=3, use_ids=True),
 }
 
 
@@ -457,7 +457,11 @@ user-side and item-side gives ŷ = c_u + b_i + ⟨e_u, e_i⟩. So FM is a two-to
 are **sums**, trained **pointwise** (MSE or BCE) like MF.
 
 - **Special case**: keep only user_id and item_id and you get MF with biases.
-- **Cold start on both sides**: the new release is placed by Σ v(tag=horror, story, stealth). A new
+- **Tags are a set**: each of a game's n tags gets weight x = 1/n, so its tags sum to 1, as in the
+  two-tower item tower. Without this, a 3-tag game would get a longer e_i and more tag × tag pairs than
+  a 2-tag game. Tag × tag pairs (horror × story) are item × item pairs, so they only feed the game's
+  bias b_i, not the user-specific part.
+- **Cold start on both sides**: the new release is placed by ⅓·Σ v(tag=horror, story, stealth) + v(mode). A new
   user is placed by Σ v(platform, age, favorite). Their own user_id / item_id rows are never active
   during training, so they stay at their small random init and add a little noise. Uncheck *Include user_id / item_id* to get a pure
   content model in which users with identical features collapse to the same point.

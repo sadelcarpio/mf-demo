@@ -374,7 +374,9 @@ def _fm_design(ds: Dataset, use_ids: bool):
     if use_ids:
         blocks_i.append(np.eye(ds.n_items, dtype=np.float32))
         names += [f"item_id={t}" for t in ds.games.title]
-    blocks_i.append(ds.item_tags)
+    # tags are a set: weight each tag 1/n so a game's tags sum to 1 (as in the item tower),
+    # so games with 3 tags don't get longer vectors or more tag x tag pairs than games with 2
+    blocks_i.append(ds.item_tags / ds.item_tags.sum(1, keepdims=True))
     names += [f"tag={t}" for t in ds.tag_vocab]
     blocks_i.append(onehot(ds.item_mode, len(ds.mode_vocab)))
     names += [f"mode={m}" for m in ds.mode_vocab]
