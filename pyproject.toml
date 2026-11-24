@@ -1,0 +1,24 @@
+[project]
+name = "mf-demo"
+version = "0.1.0"
+description = "Streamlit demo: matrix factorization -> logistic MF -> softmax -> two-tower -> FM"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit>=1.36",
+    "torch>=2.2",
+    "numpy",
+    "pandas",
+    "plotly>=5.20",
+    "scikit-learn",
+]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }

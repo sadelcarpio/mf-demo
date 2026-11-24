@@ -1,0 +1,21 @@
+item_id,title,category,tags,mode
+0,God of War Ragnarök,Action-Adventure,action|adventure|story,single
+1,Ghost of Tsushima,Action-Adventure,action|adventure|open_world,single
+2,The Last of Us Part II,Action-Adventure,action|story|stealth,single
+3,Uncharted 4,Action-Adventure,action|adventure|story,single
+4,The Witcher 3,RPG,rpg|open_world|story,single
+5,Elden Ring,RPG,rpg|action|open_world,both
+6,Cyberpunk 2077,RPG,rpg|open_world|shooter,single
+7,Baldur's Gate 3,RPG,rpg|strategy|story,both
+8,Resident Evil 4,Horror,horror|action|shooter,single
+9,Dead Space,Horror,horror|shooter|story,single
+10,Alan Wake 2,Horror,horror|story|adventure,single
+11,Silent Hill f,Horror,horror|story|stealth,single
+12,Call of Duty: MW III,Competitive,shooter|multiplayer|action,multi
+13,Valorant,Competitive,shooter|multiplayer|strategy,multi
+14,EA Sports FC 24,Competitive,sports|multiplayer,both
+15,Rocket League,Competitive,sports|racing|multiplayer,multi
+16,Mario Kart 8 Deluxe,Family,racing|party|multiplayer,both
+17,Zelda: Tears of the Kingdom,Family,adventure|open_world|puzzle,single
+18,Animal Crossing,Family,cozy|simulation,both
+19,Stardew Valley,Family,cozy|simulation|rpg,both
